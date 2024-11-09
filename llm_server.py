@@ -2,9 +2,12 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import numpy as np
 import argparse
+import sys
 from huggingface_hub import login
 
 from transformers import StoppingCriteria, StoppingCriteriaList
+
+import json
 
 
 
@@ -18,16 +21,10 @@ class StopOnToken(StoppingCriteria):
         return input_ids[0, -1] == self.stop_token_id
 
 def phi_api_call(model_name, prompt, max_tokens):
-    """
-    model_name = kwargs['model']
-    prompt = kwargs['prompt']
-    max_tokens = kwargs['max_tokens']
-    """
     
+    model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype="auto", device_map="cuda", trust_remote_code=True)
 
-    model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype="auto", device_map="cuda", trust_remote_code=True, attn_implementation="eager")
-
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
     # Define the stop token (e.g., the tokenizer's EOS token)
     stop_token_id = tokenizer.eos_token_id
@@ -39,7 +36,7 @@ def phi_api_call(model_name, prompt, max_tokens):
     inputs = tokenizer(prompt, return_tensors="pt", return_attention_mask=False).to("cuda")
 
     outputs = model.generate(**inputs, max_new_tokens=max_tokens, return_dict_in_generate=True, output_scores=True, 
-                             stopping_criteria=stopping_criteria, pad_token_id=tokenizer.eos_token_id)
+                             stopping_criteria=stopping_criteria)
 
     transition_scores = model.compute_transition_scores(
         outputs.sequences, outputs.scores, normalize_logits=True).to("cpu")
@@ -53,16 +50,32 @@ def phi_api_call(model_name, prompt, max_tokens):
     offsets = tokenized_output['offset_mapping']
 
 
-    input_length = 1 if model.config.is_encoder_decoder else inputs.input_ids.shape[1]
-    generated_tokens = outputs.sequences[:, input_length: -1][0]
-    transition_scores = transition_scores[0][:-1]
-    offsets = offsets[input_length: -1]
+    # Writing Log file
+    with open("log.txt", "w") as file:
+        for tok, offset in zip(outputs.sequences[:, ][0], offsets):
+            file.write(f"| {tok:5d} | {tokenizer.decode(tok):10s} | {offset[0]}\n")
 
+    
+    input_length = 1 if model.config.is_encoder_decoder else inputs.input_ids.shape[1]
+    generated_tokens = outputs.sequences[:, input_length: ][0]
+    transition_scores = transition_scores[0][:]
+    offsets = offsets[input_length: ]
+
+
+    # Truncating Output
+    for idx, tok in enumerate(generated_tokens):
+        if tok == 198 and generated_tokens[idx + 1] == 18243 and generated_tokens[idx + 2] == 2482:
+            generated_tokens = generated_tokens[:idx]
+            transition_scores = transition_scores[:idx]
+            offsets = offsets[:idx]
+            break
+
+    
     #for tok, score, offset in zip(generated_tokens, transition_scores, offsets):
         # | token | token string | log probability | probability
         #print(f"| {tok:5d} | {tokenizer.decode(tok):10s} | {score.numpy():.3f} | {np.exp(score.numpy()):.2%} | {offset[0]}")
 
-
+    
     result = {
         "text": tokenizer.decode(generated_tokens),
         "logprobs": {
@@ -70,25 +83,33 @@ def phi_api_call(model_name, prompt, max_tokens):
             "token_logprobs": transition_scores.tolist(),
             "text_offset": [a[0] for a in offsets],
         },
-        "finish_reason": "stop" if len(generated_tokens) + 1 < 64 else "length"
+        "finish_reason": "stop" if len(generated_tokens) < max_tokens else "length"
     }
 
     return {'model': model_name, 'choices': [result]}
 
 
 if __name__ == "__main__":
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', type=str, default="microsoft/Phi-3.5-mini-instruct")
     parser.add_argument('--prompt', type=str, default=None)
     parser.add_argument('--max_tokens', type=int, default=64)
     args = parser.parse_args()
 
+    print(args.prompt)
+    """
+    model_name = "microsoft/phi-2"
+    # Get the multiline argument
+    prompt = sys.argv[1]
+    # Get the single word argument
+    max_tokens = int(sys.argv[2])
+
     # Log in to Hugging Face with your access token
     
     #login(token=access_token)
-    api_result = phi_api_call(args.model_name, args.prompt, args.max_tokens)
-    with open('output.txt', 'w') as file:
+    api_result = phi_api_call(model_name, prompt, max_tokens)
+    with open('output.json', 'w') as file:
         # write variables using repr() function
-        file.write(str(api_result))
+        json.dump(api_result, file)
 
- 
