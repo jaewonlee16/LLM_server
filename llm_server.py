@@ -22,7 +22,7 @@ class StopOnToken(StoppingCriteria):
 
 def phi_api_call(model_name, prompt, max_tokens):
     
-    model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype="auto", device_map="cuda", trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16, device_map="cuda", trust_remote_code=True)
 
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
@@ -99,7 +99,9 @@ if __name__ == "__main__":
 
     print(args.prompt)
     """
-    model_name = "microsoft/phi-2"
+    #model_name = "microsoft/phi-2"
+    model_name = "meta-llama/Llama-3.2-3B-Instruct"
+    #model_name = "google/gemma-2-2b"
     # Get the multiline argument
     prompt = sys.argv[1]
     # Get the single word argument
@@ -113,3 +115,5 @@ if __name__ == "__main__":
         # write variables using repr() function
         json.dump(api_result, file)
 
+    
+    
